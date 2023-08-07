@@ -2,8 +2,6 @@
 
 Node.js CLI tool to translate .json files using the DeepL API. Requires a [DeepL API key](https://www.deepl.com/nl/docs-api/).
 
-Allows selecting which properties to translate.
-
 ## Installation
 
     npm install
