@@ -19,35 +19,39 @@ const optionDefinitions = [
 
 const options = commandLineArgs(optionDefinitions);
 
-async function translate(options) {
-  const key = options.key || env.DEEPL_API_KEY;
-  const inputFileName = options.input || getJsonFileInFolder();
-  let outputFileName = options.output;
-  const sourceLanguage = options.source;
-  const targetLanguage = options.target || 'FR';
-  const formality = options.formal ? 'more' : 'less';
-  const translateProperties = options.properties;
-  const logDebug = options.debug;
-  const displayUsageLimit = options.usagelimit;
+const authKey = options.key || env.DEEPL_API_KEY;
+const inputFileName = options.input || getJsonFileInFolder();
+let outputFileName = options.output;
+const sourceLanguage = options.source;
+const targetLanguage = options.target || 'FR';
+const formality = options.formal ? 'prefer_more' : 'prefer_less';
+const translateProperties = options.properties || false;
+const logDebug = options.debug || false;
+const displayUsageLimit = options.usagelimit;
 
-  if (!key) throw new Error('Specify a DeepL API key as DEEPL_API_KEY environment variable, or using the --key or -k parameter.')
-  if (!inputFileName) throw new Error('At least specify input file with --input or -i.');
+if (!authKey) throw new Error('Specify a DeepL API key as DEEPL_API_KEY environment variable, or using the --key or -k parameter.')
+if (!inputFileName) throw new Error('At least specify input file with --input or -i.');
 
-  if (!outputFileName) outputFileName = inputFileName.split('.').slice(0, -1).join('.') + '.' + targetLanguage.toLowerCase() + '.json';
+if (!outputFileName) outputFileName = inputFileName.split('.').slice(0, -1).join('.') + '.' + targetLanguage.toLowerCase() + '.json';
 
-  log('Input file:', inputFileName);
-  log('Output file:', outputFileName);
-  log('Source language:', sourceLanguage || 'Auto detect');
-  log('Target language:', targetLanguage);
-  log('Formality:', formality);
-  log('Translate properties:', translateProperties);
-  log('Show debug:', logDebug);
-  log('Show usage limit:', displayUsageLimit);
+log('Input file:', inputFileName);
+log('Output file:', outputFileName);
+log('Source language:', sourceLanguage || 'Auto detect');
+log('Target language:', targetLanguage);
+log('Formality:', formality);
+log('Translate properties:', translateProperties);
+log('Show debug:', logDebug);
+log('Show usage limit:', displayUsageLimit);
 
-  log('Parsing json...');
+const translator = new deepl.Translator(authKey);
+const cache = {};
 
-  const allInputAsText = await fs.readFile(inputFileName).toString();
+main(options).catch(console.error);
 
+async function main() {
+  log('Loading json file...');
+
+  const allInputAsText = fs.readFileSync(inputFileName).toString();
   const inputObj = JSON.parse(allInputAsText);
 
   log('Translating...');
@@ -56,7 +60,7 @@ async function translate(options) {
   
   const outputAsText = JSON.stringify(translatedObj);
 
-  await fs.writeFile(outputFileName, outputAsText);
+  fs.writeFileSync(outputFileName, outputAsText);
 
   if (displayUsageLimit) {
     console.log('Usage limit:');
@@ -74,9 +78,23 @@ async function translate(options) {
 }
 
 async function translate(text) {
-  // TODO: Add the translation logic here. 
-  // Return the translated text.
-  return text;
+  if (!text) return text;
+
+  const safeText = text || '';
+  const truncatedText = truncateString(safeText, 50);
+
+  if (cache[text]) {
+    debug('Entry found in cache, returning: ' + truncatedText)
+    return cache[text];
+  }
+  
+  debug('Translating: ' + truncatedText) 
+  const response = await translator.translateText(text, sourceLanguage, targetLanguage, { formality });
+  const translatedText = response.text;
+
+  cache[text] = translatedText;
+
+  return translatedText;
 }
 
 async function translateJSON(jsonObj) {
@@ -88,7 +106,7 @@ async function translateJSON(jsonObj) {
   } else if (typeof jsonObj === 'object' && jsonObj !== null) {
     let newObject = {};
     for (const key of Object.keys(jsonObj)) {
-      const translatedKey = await translate(key);
+      const translatedKey = translateProperties ? await translate(key) : key;
       newObject[translatedKey] = await translateJSON(jsonObj[key]);
     }
     return newObject;
@@ -119,4 +137,10 @@ function debug(...args) {
   if (logDebug) console.log(...args);
 }
 
-translate(options).catch(console.error);
+function truncateString(str, num) {
+  if (str.length > num) {
+    return str.slice(0, num) + "...";
+  } else {
+    return str;
+  }
+}
