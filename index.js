@@ -2,10 +2,8 @@ require('./flatmap');
 const commandLineArgs = require('command-line-args');
 const path = require('path')
 const fs = require('fs');
-const axios = require('axios');
 const { env } = require('process');
-
-const DEEPL_API_URL = 'https://api.deepl.com/v2/';
+const deepl = require('deepl-node');
 
 const optionDefinitions = [
   { name: 'input', alias: 'i', type: String },
@@ -14,88 +12,92 @@ const optionDefinitions = [
   { name: 'target', alias: 't', type: String },
   { name: 'key', alias: 'k', type: String },
   { name: 'formal', alias: 'f', type: Boolean },
+  { name: 'properties', alias: 'p', type: Boolean },
   { name: 'debug', alias: 'd', type: Boolean },
   { name: 'usagelimit', alias: 'u', type: Boolean },
 ];
 
 const options = commandLineArgs(optionDefinitions);
 
-const key = options.key || env.DEEPL_API_KEY;
-const input = options.input || getJsonFileInFolder();
-let output = options.output;
-const source = options.source;
-const target = options.target || 'FR';
-const formality = options.formal ? 'more' : 'less';
-const logDebug = options.debug;
-const displayUsageLimit = options.usagelimit;
+async function translate(options) {
+  const key = options.key || env.DEEPL_API_KEY;
+  const inputFileName = options.input || getJsonFileInFolder();
+  let outputFileName = options.output;
+  const sourceLanguage = options.source;
+  const targetLanguage = options.target || 'FR';
+  const formality = options.formal ? 'more' : 'less';
+  const translateProperties = options.properties;
+  const logDebug = options.debug;
+  const displayUsageLimit = options.usagelimit;
 
-if (!key) throw new Error('Specify a DeepL API key as DEEPL_API_KEY environment variable, or using the --key or -k parameter.')
-if (!input) throw new Error('At least specify input file with --input or -i.');
+  if (!key) throw new Error('Specify a DeepL API key as DEEPL_API_KEY environment variable, or using the --key or -k parameter.')
+  if (!inputFileName) throw new Error('At least specify input file with --input or -i.');
 
-if (!output) output = input.split('.').slice(0, -1).join('.') + '.' + target.toLowerCase() + '.json';
+  if (!outputFileName) outputFileName = inputFileName.split('.').slice(0, -1).join('.') + '.' + targetLanguage.toLowerCase() + '.json';
 
-log('Input file:', input);
-log('Output file:', output);
-log('Source language:', source || 'Auto detect');
-log('Target language:', target);
-log('Formality:', formality);
-log('Show debug:', logDebug);
+  log('Input file:', inputFileName);
+  log('Output file:', outputFileName);
+  log('Source language:', sourceLanguage || 'Auto detect');
+  log('Target language:', targetLanguage);
+  log('Formality:', formality);
+  log('Translate properties:', translateProperties);
+  log('Show debug:', logDebug);
+  log('Show usage limit:', displayUsageLimit);
 
-log('Compiling entries...');
+  log('Parsing json...');
 
-const allInputAsText = fs.readFileSync(input).toString();
+  const allInputAsText = await fs.readFile(inputFileName).toString();
 
-if (!allInputAsText || allInputAsText.length === 0 || isNaN(allInputAsText.charAt(0))) throw new Error('Does not look like a json file');
+  const inputObj = JSON.parse(allInputAsText);
 
-const entries = [];
+  log('Translating...');
 
-const params = new URLSearchParams();
-params.append('auth_key', key);
-if (source) params.append('source_lang', source);
-params.append('target_lang', target);
-params.append('split_sentences', 0);
-params.append('formality', formality);
+  const translatedObj = await translateJSON(inputObj);
+  
+  const outputAsText = JSON.stringify(translatedObj);
 
-const entriesToTranslate = entries.forEach(e => {
-  params.append('text', e.text);
-});
+  await fs.writeFile(outputFileName, outputAsText);
 
-log('Translating...');
-
-axios.default.post(DEEPL_API_URL + 'translate', params.toString())
-  .then((response) => {
-    if (response.status !== 200) {
-      console.error('Request to DeepL failed', response);
-      throw new Error(response.data);
-    } else {
-      const translations = response.data.translations.map(t => t.text);
-      debug(translations);
-
-      log('Done, writing file...');
-      //fs.writeFileSync(output, targetEntries.reduce((p, c) => p + c.toText(), ''));
-      log('Finished.');
-
-      if (displayUsageLimit) {
-        log('Requesting usage limit...');
-        axios.default.get(DEEPL_API_URL + 'usage', {params: { 'auth_key': key }})
-        .then((response) => {
-          if (response.status !== 200) {
-            console.error('Request to DeepL failed', response);
-          } else {
-            log('Usage:', response.data.character_count + '/' + response.data.character_limit,
-              Math.round(response.data.character_count / response.data.character_limit * 100) + '%');
-          }
-        }).catch((err) => { 
-          console.error('Error retrieving usage limit', err);
-          throw new Error(err);
-        });
-      }
+  if (displayUsageLimit) {
+    console.log('Usage limit:');
+    const usage = await translator.getUsage();
+    if (usage.anyLimitReached()) {
+        console.log('Translation limit exceeded.');
     }
-  })
-  .catch((err) => { 
-    console.error('Translation failed', err);
-    throw new Error(err);
-  });
+    if (usage.character) {
+        console.log(`Characters: ${usage.character.count} of ${usage.character.limit}`);
+    }
+    if (usage.document) {
+        console.log(`Documents: ${usage.document.count} of ${usage.document.limit}`);
+    }
+  }
+}
+
+async function translate(text) {
+  // TODO: Add the translation logic here. 
+  // Return the translated text.
+  return text;
+}
+
+async function translateJSON(jsonObj) {
+  if (Array.isArray(jsonObj)) {
+    for (let i = 0; i < jsonObj.length; i++) {
+      jsonObj[i] = await translateJSON(jsonObj[i]);
+    }
+    return jsonObj;
+  } else if (typeof jsonObj === 'object' && jsonObj !== null) {
+    let newObject = {};
+    for (const key of Object.keys(jsonObj)) {
+      const translatedKey = await translate(key);
+      newObject[translatedKey] = await translateJSON(jsonObj[key]);
+    }
+    return newObject;
+  } else if (typeof jsonObj === 'string') {
+    return await translate(jsonObj);
+  } else {
+    return jsonObj;
+  }
+}
 
 function getJsonFileInFolder() {
   const files = fs.readdirSync('.');
@@ -116,3 +118,5 @@ function log(...args) {
 function debug(...args) {
   if (logDebug) console.log(...args);
 }
+
+translate(options).catch(console.error);
