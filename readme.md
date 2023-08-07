@@ -21,5 +21,6 @@ Allows selecting which properties to translate.
 - **--key** / **-k**: Your DeepL API key. Can also be set as environment variable `DEEPL_API_KEY`.
 - **--formal** / **-f**: Flag. DeepL setting: prefer formal language. Default false.
 - **--properties** / **-p**: Flag. Also translate property values. Default false.
+- **--confirm** / **-c**: Flag. Ask for confirmation before launching requests. Default false.
 - **--debug** / **-d**: Flag. Also log debug statements. Default false.
 - **--usagelimit** / **-u**: Flag. Display your DeepL API key's usage limit after use.

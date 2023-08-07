@@ -15,6 +15,7 @@
   "dependencies": {
     "@types/node": "^14.11.8",
     "command-line-args": "^5.1.1",
-    "deepl-node": "^1.10.2"
+    "deepl-node": "^1.10.2",
+    "enquirer": "^2.4.1"
   }
 }
