@@ -1,6 +1,6 @@
 require('./flatmap');
 const commandLineArgs = require('command-line-args');
-const path = require('path')
+const path = require('path');
 const fs = require('fs');
 const { env } = require('process');
 const deepl = require('deepl-node');
@@ -32,10 +32,19 @@ const askForConfirmation = options.confirm || false;
 const logDebug = options.debug || false;
 const displayUsageLimit = options.usagelimit;
 
-if (!authKey) throw new Error('Specify a DeepL API key as DEEPL_API_KEY environment variable, or using the --key or -k parameter.')
-if (!inputFileName) throw new Error('At least specify input file with --input or -i.');
+if (!authKey)
+  throw new Error(
+    'Specify a DeepL API key as DEEPL_API_KEY environment variable, or using the --key or -k parameter.'
+  );
+if (!inputFileName)
+  throw new Error('At least specify input file with --input or -i.');
 
-if (!outputFileName) outputFileName = inputFileName.split('.').slice(0, -1).join('.') + '.' + targetLanguage.toLowerCase() + '.json';
+if (!outputFileName)
+  outputFileName =
+    inputFileName.split('.').slice(0, -1).join('.') +
+    '.' +
+    targetLanguage.toLowerCase() +
+    '.json';
 
 log('Input file:', inputFileName);
 log('Output file:', outputFileName);
@@ -51,6 +60,8 @@ const cache = {};
 let totalChars = 0;
 
 main(options).catch(console.error);
+
+const placeholderMap = new Map();
 
 async function main() {
   await logUsageLimit();
@@ -70,28 +81,51 @@ async function main() {
   if (askForConfirmation) {
     const prompt = new Confirm({
       name: 'continue',
-      message: 'Do you want to continue?'
+      message: 'Do you want to continue?',
     });
-    
+
     const answer = await prompt.run();
     if (!answer) return;
   }
-  
+
   let i = 0;
-  for (let key in cache) {
-    const pct = Math.trunc(i++ / totalEntries * 100);
-    log(`Translating entry ${i}/${totalEntries} - ${pct}%: ${truncateString(key)}`);
-    const response = await translator.translateText(key, sourceLanguage, targetLanguage, { formality });
-    const translatedText = response.text;
-    cache[key] = translatedText;
+  const keys = Object.keys(cache);
+  let batches = [];
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const batchIdx = Math.max(batches.length - 1, 0);
+    if (!batches[batchIdx]) {
+      batches[batchIdx] = [];
+    }
+    batches[batchIdx].push(key);
+    if (batches[batchIdx]?.length >= 49) {
+      batches.push([]);
+    }
   }
-  
+
+  for (const batch of batches) {
+    const pct = Math.trunc((i++ / batches.length) * 100);
+    log(`Translating batch ${i}/${batches.length} - ${pct}%}`);
+    const response = await translator.translateText(
+      batch,
+      sourceLanguage,
+      targetLanguage,
+      {
+        formality,
+      }
+    );
+    response.map((res, i) => {
+      cache[batch[i]] = res.text;
+    });
+  }
+
   log('Constructing translated object...');
-  
+
   const translatedObj = await traverseJSON(inputObj, translate);
-  
+
   log('Generating file...');
-  
+
   const outputAsText = JSON.stringify(translatedObj);
 
   fs.writeFileSync(outputFileName, outputAsText);
@@ -104,33 +138,80 @@ async function logUsageLimit() {
     console.log('Usage limit:');
     const usage = await translator.getUsage();
     if (usage.anyLimitReached()) {
-        console.log('Translation limit exceeded.');
+      console.log('Translation limit exceeded.');
     }
     if (usage.character) {
-        console.log(`Characters: ${usage.character.count} of ${usage.character.limit}`);
+      console.log(
+        `Characters: ${usage.character.count} of ${usage.character.limit}`
+      );
     }
     if (usage.document) {
-        console.log(`Documents: ${usage.document.count} of ${usage.document.limit}`);
+      console.log(
+        `Documents: ${usage.document.count} of ${usage.document.limit}`
+      );
     }
   }
 }
 
 async function addEntry(text) {
-  if (!text) return text;
-  if (!cache[text]) {
-    totalChars += text.length;
-    debug('Adding entry: ' + truncateString(text));
-    cache[text] = '';
+  if (!text || typeof text !== 'string') return text;
+
+  const placeholders = text.match(/\{\{.*?\}\}/g);
+
+  if (!placeholders) {
+    if (!cache[text]) {
+      totalChars += text.length;
+      debug('Adding entry: ' + truncateString(text));
+      cache[text] = '';
+    }
+    return text;
   }
+
+  let i = 0;
+  const processedText = text.replace(/\{\{.*?\}\}/g, () => `<t${i++}/>`);
+
+  if (!cache[processedText]) {
+    totalChars += processedText.length;
+    debug('Adding processed entry: ' + truncateString(processedText));
+    placeholderMap.set(processedText, placeholders);
+    cache[processedText] = '';
+  }
+
   return text;
 }
 
 async function translate(text) {
-  if (!text) return text;
-  if (!cache[text]) {
-    throw new Error('Entry not found in cache, should never happen: ' + truncateString(text))
+  if (!text || typeof text !== 'string') return text;
+
+  const originalPlaceholders = text.match(/\{\{.*?\}\}/g);
+
+  let processedTextKey = text;
+  if (originalPlaceholders) {
+    let i = 0;
+    processedTextKey = text.replace(/\{\{.*?\}\}/g, () => `<t${i++}/>`);
   }
-  return cache[text];
+
+  const translatedText = cache[processedTextKey];
+
+  if (translatedText === undefined) {
+    throw new Error(
+      'Entry not found in cache, should never happen: ' +
+        truncateString(processedTextKey)
+    );
+  }
+
+  if (!originalPlaceholders) {
+    return translatedText;
+  }
+
+  const storedPlaceholders = placeholderMap.get(processedTextKey);
+  let i = 0;
+  const restoredText = translatedText.replace(
+    /<t\d+\/>/g,
+    () => storedPlaceholders[i++]
+  );
+
+  return restoredText;
 }
 
 async function traverseJSON(jsonObj, action) {
@@ -155,12 +236,12 @@ async function traverseJSON(jsonObj, action) {
 
 function getJsonFileInFolder() {
   const files = fs.readdirSync('.');
-  for(let i = 0; i < files.length; i++){
+  for (let i = 0; i < files.length; i++) {
     const filename = path.join(files[i]);
     var stat = fs.lstatSync(filename);
     if (!stat.isDirectory() && filename.indexOf('.json') >= 0) {
       return filename;
-    };
+    }
   }
   return null;
 }
@@ -175,7 +256,7 @@ function debug(...args) {
 
 function truncateString(str, num = 50) {
   if (str.length > num) {
-    return str.slice(0, num) + "...";
+    return str.slice(0, num) + '...';
   } else {
     return str;
   }
